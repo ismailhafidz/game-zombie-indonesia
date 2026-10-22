@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>Game Zombie Indonesia</title>
+<style>
+html,body{margin:0;height:100%;overflow:hidden;background:#000;touch-action:none;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none}
+canvas{display:block}
+#joy{position:fixed;left:24px;bottom:24px;width:120px;height:120px;border-radius:50%;background:rgba(255,255,255,.2);border:2px solid rgba(255,255,255,.5)}
+#knob{position:absolute;left:40px;top:40px;width:40px;height:40px;border-radius:50%;background:rgba(255,255,255,.7)}
+#info{position:fixed;top:8px;left:8px;color:#fff;font:14px sans-serif;text-shadow:0 0 3px #000}
+</style>
+</head>
+<body>
+<div id="info">Tahap 1: dunia 3D dasar</div>
+<div id="joy"><div id="knob"></div></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+const scene=new THREE.Scene();
+scene.background=new THREE.Color(0x9ec9e8);
+scene.fog=new THREE.Fog(0x9ec9e8,30,120);
+const camera=new THREE.PerspectiveCamera(65,innerWidth/innerHeight,0.1,200);
+const renderer=new THREE.WebGLRenderer({antialias:true});
+renderer.setSize(innerWidth,innerHeight);
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+document.body.appendChild(renderer.domElement);
+scene.add(new THREE.HemisphereLight(0xffffff,0x556b3a,0.9));
+const sun=new THREE.DirectionalLight(0xffffff,0.6);
+sun.position.set(30,50,20);
+scene.add(sun);
+
+function box(w,h,d,color,x,y,z){
+  const m=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),new THREE.MeshLambertMaterial({color}));
+  m.position.set(x,y,z);
+  scene.add(m);
+  return m;
+}
+
+const ground=new THREE.Mesh(new THREE.PlaneGeometry(400,400),new THREE.MeshLambertMaterial({color:0x6b8f4e}));
+ground.rotation.x=-Math.PI/2;
+scene.add(ground);
+box(400,0.05,10,0x555a5f,0,0.03,0);
+for(let x=-190;x<190;x+=8)box(3,0.06,0.3,0xe8e2b0,x,0.07,0);
+
+const colors=[0xa0522d,0x8b6b4a,0xb5651d,0x9c7a5b,0xc08552];
+const walls=[];
+for(let i=0;i<24;i++){
+  const side=i%2?1:-1;
+  const x=-80+Math.floor(i/2)*14+((i*7)%5);
+  const w=6+(i*3)%5,h=4+(i*5)%6,d=6+(i*2)%4;
+  const z=side*(12+d/2);
+  box(w,h,d,colors[i%5],x,h/2,z);
+  walls.push({minX:x-w/2,maxX:x+w/2,minZ:z-d/2,maxZ:z+d/2});
+}
+
+const player=new THREE.Group();
+const body=new THREE.Mesh(new THREE.CylinderGeometry(0.4,0.4,1.2,12),new THREE.MeshLambertMaterial({color:0x2b6cb0}));
+body.position.y=0.8;
+const head=new THREE.Mesh(new THREE.SphereGeometry(0.3,12,12),new THREE.MeshLambertMaterial({color:0xe0b48a}));
+head.position.y=1.7;
+const gun=new THREE.Mesh(new THREE.BoxGeometry(0.15,0.15,0.8),new THREE.MeshLambertMaterial({color:0x222222}));
+gun.position.set(0.3,1.1,0.5);
+player.add(body,head,gun);
+player.position.set(0,0,5);
+scene.add(player);
+
+let yaw=0;
+const keys={};
+addEventListener('keydown',e=>keys[e.code]=true);
+addEventListener('keyup',e=>keys[e.code]=false);
+
+let jx=0,jy=0,joyId=null,lookId=null,lastX=0;
+const joy=document.getElementById('joy'),knob=document.getElementById('knob');
+function setKnob(dx,dy){
+  const r=40,l=Math.hypot(dx,dy);
+  if(l>r){dx=dx/l*r;dy=dy/l*r;}
+  knob.style.left=(40+dx)+'px';
+  knob.style.top=(40+dy)+'px';
+  jx=dx/r;jy=dy/r;
+}
+function moveJoy(t){
+  const r=joy.getBoundingClientRect();
+  setKnob(t.clientX-(r.left+r.width/2),t.clientY-(r.top+r.height/2));
+}
+addEventListener('touchstart',e=>{
+  e.preventDefault();
+  for(const t of e.changedTouches){
+    if(joy.contains(t.target)){joyId=t.identifier;moveJoy(t);}
+    else if(lookId===null&&t.clientX>innerWidth/2){lookId=t.identifier;lastX=t.clientX;}
+  }
+},{passive:false});
+addEventListener('touchmove',e=>{
+  e.preventDefault();
+  for(const t of e.changedTouches){
+    if(t.identifier===joyId)moveJoy(t);
+    if(t.identifier===lookId){yaw-=(t.clientX-lastX)*0.006;lastX=t.clientX;}
+  }
+},{passive:false});
+function endTouch(e){
+  for(const t of e.changedTouches){
+    if(t.identifier===joyId){joyId=null;setKnob(0,0);}
+    if(t.identifier===lookId)lookId=null;
+  }
+}
+addEventListener('touchend',endTouch);
+addEventListener('touchcancel',endTouch);
+
+function blocked(x,z){
+  for(const w of walls){
+    if(x>w.minX-0.5&&x<w.maxX+0.5&&z>w.minZ-0.5&&z<w.maxZ+0.5)return true;
+  }
+  return false;
+}
+
+const clock=new THREE.Clock();
+function loop(){
+  requestAnimationFrame(loop);
+  const dt=Math.min(clock.getDelta(),0.05);
+  if(keys.ArrowLeft)yaw+=2*dt;
+  if(keys.ArrowRight)yaw-=2*dt;
+  const fx=Math.sin(yaw),fz=Math.cos(yaw);
+  const rx=-Math.cos(yaw),rz=Math.sin(yaw);
+  let ix=jx+(keys.KeyD?1:0)-(keys.KeyA?1:0);
+  let iz=-jy+(keys.KeyW?1:0)-(keys.KeyS?1:0);
+  const len=Math.hypot(ix,iz);
+  if(len>1){ix/=len;iz/=len;}
+  if(len>0.05){
+    const dx=(fx*iz+rx*ix)*6*dt;
+    const dz=(fz*iz+rz*ix)*6*dt;
+    const nx=player.position.x+dx;
+    const nz=player.position.z+dz;
+    if(!blocked(nx,player.position.z))player.position.x=Math.max(-190,Math.min(190,nx));
+    if(!blocked(player.position.x,nz))player.position.z=Math.max(-190,Math.min(190,nz));
+    player.rotation.y=Math.atan2(dx,dz);
+  }
+  camera.position.set(player.position.x-fx*6,3.5,player.position.z-fz*6);
+  camera.lookAt(player.position.x,1.5,player.position.z);
+  renderer.render(scene,camera);
+}
+loop();
+
+addEventListener('resize',()=>{
+  camera.aspect=innerWidth/innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth,innerHeight);
+});
+</script>
+</body>
+</html>
