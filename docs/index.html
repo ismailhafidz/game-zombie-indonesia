@@ -26,7 +26,7 @@ canvas{display:block}
 <div id="info"></div>
 <div id="hpwrap"><div id="hpbar"></div></div>
 <div id="cross"></div>
-<div id="hint">Klik layar untuk mengunci mouse<br>WASD jalan | Mouse bidik | Klik kiri tembak | Esc lepas mouse</div>
+<div id="hint">Klik layar untuk mengunci mouse<br>WASD jalan | Mouse bidik (atas-bawah juga) | Klik kiri tembak | Esc lepas mouse</div>
 <div id="joy"><div id="knob"></div></div>
 <div id="fire">TEMBAK</div>
 <div id="over"><div>GAME OVER</div><small id="overInfo"></small><small>Klik atau ketuk layar untuk main lagi</small></div>
@@ -74,12 +74,18 @@ for(let i=0;i<24;i++){
   const w=6+(i*3)%5,h=4+(i*5)%6,d=6+(i*2)%4;
   const z=side*(12+d/2);
   box(w,h,d,colors[i%5],x,h/2,z);
-  walls.push({minX:x-w/2,maxX:x+w/2,minZ:z-d/2,maxZ:z+d/2});
+  walls.push({minX:x-w/2,maxX:x+w/2,minZ:z-d/2,maxZ:z+d/2,h:h});
 }
 
 function blocked(x,z){
   for(const w of walls){
     if(x>w.minX-0.5&&x<w.maxX+0.5&&z>w.minZ-0.5&&z<w.maxZ+0.5)return true;
+  }
+  return false;
+}
+function wallHit(x,y,z){
+  for(const w of walls){
+    if(y<w.h&&x>w.minX&&x<w.maxX&&z>w.minZ&&z<w.maxZ)return true;
   }
   return false;
 }
@@ -102,6 +108,7 @@ const bulletG=new THREE.SphereGeometry(0.12,6,6);
 const bulletM=new THREE.MeshBasicMaterial({color:0xffd84d});
 
 let hp=100,over=false,overAt=0,wave=0,kills=0,toSpawn=0,spawnT=0,waveDelay=1.5,fireT=0,firing=false,locked=false;
+let yaw=0,pitch=0;
 const zombies=[],bullets=[];
 const infoEl=document.getElementById('info'),hpEl=document.getElementById('hpbar');
 const overEl=document.getElementById('over'),overInfo=document.getElementById('overInfo');
@@ -139,33 +146,40 @@ function startWave(){
   waveDelay=3;
 }
 
-let yaw=0;
+function aimPoint(){
+  const cp=Math.cos(pitch);
+  return {
+    x:player.position.x+Math.sin(yaw)*cp*30,
+    y:1.6+Math.sin(pitch)*30,
+    z:player.position.z+Math.cos(yaw)*cp*30
+  };
+}
 
 function shoot(){
-  let dx,dz;
+  const ox=player.position.x,oy=1.3,oz=player.position.z;
+  let dx,dy,dz;
   if(locked){
-    dx=Math.sin(yaw);
-    dz=Math.cos(yaw);
+    const a=aimPoint();
+    dx=a.x-ox;dy=a.y-oy;dz=a.z-oz;
   }else{
     let target=null,best=30;
     for(const z of zombies){
-      const d=Math.hypot(z.position.x-player.position.x,z.position.z-player.position.z);
+      const d=Math.hypot(z.position.x-ox,z.position.z-oz);
       if(d<best){best=d;target=z;}
     }
     if(target){
-      dx=target.position.x-player.position.x;
-      dz=target.position.z-player.position.z;
-      const l=Math.hypot(dx,dz)||1;dx/=l;dz/=l;
+      dx=target.position.x-ox;dy=1.0-oy;dz=target.position.z-oz;
     }else{
-      dx=Math.sin(player.rotation.y);
-      dz=Math.cos(player.rotation.y);
+      dx=Math.sin(player.rotation.y);dy=0;dz=Math.cos(player.rotation.y);
     }
     player.rotation.y=Math.atan2(dx,dz);
   }
+  const l=Math.hypot(dx,dy,dz)||1;
+  dx/=l;dy/=l;dz/=l;
   const m=new THREE.Mesh(bulletG,bulletM);
-  m.position.set(player.position.x+dx*0.8,1.2,player.position.z+dz*0.8);
+  m.position.set(ox+dx*0.8,oy+dy*0.8,oz+dz*0.8);
   scene.add(m);
-  bullets.push({m,vx:dx*40,vz:dz*40,life:1});
+  bullets.push({m,vx:dx*40,vy:dy*40,vz:dz*40,life:1.2});
 }
 
 function updateHud(){
@@ -176,6 +190,8 @@ function updateHud(){
 function updateHint(){
   hintEl.style.display=(!isTouch&&!locked&&!over)?'block':'none';
 }
+
+function clampPitch(){pitch=Math.max(-0.5,Math.min(0.6,pitch));}
 
 const keys={};
 addEventListener('keydown',e=>{
@@ -200,11 +216,15 @@ addEventListener('mousedown',e=>{
 });
 addEventListener('mouseup',e=>{if(e.button===0&&!isTouch)firing=false;});
 addEventListener('mousemove',e=>{
-  if(locked&&!over)yaw-=e.movementX*0.0025;
+  if(locked&&!over){
+    yaw-=e.movementX*0.0025;
+    pitch-=e.movementY*0.0025;
+    clampPitch();
+  }
 });
 addEventListener('contextmenu',e=>e.preventDefault());
 
-let jx=0,jy=0,joyId=null,lookId=null,fireId=null,lastX=0;
+let jx=0,jy=0,joyId=null,lookId=null,fireId=null,lastX=0,lastY=0;
 const joy=document.getElementById('joy'),knob=document.getElementById('knob'),fireBtn=document.getElementById('fire');
 function setKnob(dx,dy){
   const r=40,l=Math.hypot(dx,dy);
@@ -223,14 +243,19 @@ addEventListener('touchstart',e=>{
   for(const t of e.changedTouches){
     if(fireBtn.contains(t.target)){fireId=t.identifier;firing=true;}
     else if(joy.contains(t.target)){joyId=t.identifier;moveJoy(t);}
-    else if(lookId===null&&t.clientX>innerWidth/2){lookId=t.identifier;lastX=t.clientX;}
+    else if(lookId===null&&t.clientX>innerWidth/2){lookId=t.identifier;lastX=t.clientX;lastY=t.clientY;}
   }
 },{passive:false});
 addEventListener('touchmove',e=>{
   e.preventDefault();
   for(const t of e.changedTouches){
     if(t.identifier===joyId)moveJoy(t);
-    if(t.identifier===lookId){yaw-=(t.clientX-lastX)*0.006;lastX=t.clientX;}
+    if(t.identifier===lookId){
+      yaw-=(t.clientX-lastX)*0.006;
+      pitch-=(t.clientY-lastY)*0.004;
+      clampPitch();
+      lastX=t.clientX;lastY=t.clientY;
+    }
   }
 },{passive:false});
 function endTouch(e){
@@ -248,12 +273,14 @@ function loop(){
   requestAnimationFrame(loop);
   const dt=Math.min(clock.getDelta(),0.05);
   const now=clock.elapsedTime;
-  const fx=Math.sin(yaw),fz=Math.cos(yaw);
-  const rx=-Math.cos(yaw),rz=Math.sin(yaw);
 
   if(!over){
     if(keys.ArrowLeft)yaw+=2*dt;
     if(keys.ArrowRight)yaw-=2*dt;
+    if(keys.ArrowUp){pitch+=1.2*dt;clampPitch();}
+    if(keys.ArrowDown){pitch-=1.2*dt;clampPitch();}
+    const fx=Math.sin(yaw),fz=Math.cos(yaw);
+    const rx=-Math.cos(yaw),rz=Math.sin(yaw);
     let ix=jx+(keys.KeyD?1:0)-(keys.KeyA?1:0);
     let iz=-jy+(keys.KeyW?1:0)-(keys.KeyS?1:0);
     const len=Math.hypot(ix,iz);
@@ -267,7 +294,8 @@ function loop(){
       if(!blocked(player.position.x,nz))player.position.z=Math.max(-190,Math.min(190,nz));
       if(!locked)player.rotation.y=Math.atan2(dx,dz);
     }
-    if(locked)player.rotation.y=yaw;
+    if(locked){player.rotation.y=yaw;gun.rotation.x=-pitch;}
+    else gun.rotation.x=0;
 
     fireT-=dt;
     if((firing||keys.Space)&&fireT<=0){shoot();fireT=0.25;}
@@ -312,14 +340,16 @@ function loop(){
     for(let i=bullets.length-1;i>=0;i--){
       const b=bullets[i];
       b.m.position.x+=b.vx*dt;
+      b.m.position.y+=b.vy*dt;
       b.m.position.z+=b.vz*dt;
       b.life-=dt;
-      let remove=b.life<=0||blocked(b.m.position.x,b.m.position.z);
+      const bx=b.m.position.x,by=b.m.position.y,bz=b.m.position.z;
+      let remove=b.life<=0||by<0.05||by>25||wallHit(bx,by,bz);
       if(!remove){
         for(let j=zombies.length-1;j>=0;j--){
           const z=zombies[j];
-          if(Math.hypot(z.position.x-b.m.position.x,z.position.z-b.m.position.z)<0.8){
-            z.userData.hp--;
+          if(by<2.05&&Math.hypot(z.position.x-bx,z.position.z-bz)<0.65){
+            z.userData.hp-=(by>1.4?2:1);
             z.userData.flash=0.12;
             remove=true;
             if(z.userData.hp<=0){
@@ -345,8 +375,10 @@ function loop(){
     updateHud();
   }
 
-  camera.position.set(player.position.x-fx*6,3.5,player.position.z-fz*6);
-  camera.lookAt(player.position.x+fx*20,1.2,player.position.z+fz*20);
+  const cfx=Math.sin(yaw),cfz=Math.cos(yaw);
+  camera.position.set(player.position.x-cfx*6,3.2,player.position.z-cfz*6);
+  const a=aimPoint();
+  camera.lookAt(a.x,a.y,a.z);
   renderer.render(scene,camera);
 }
 updateHud();
