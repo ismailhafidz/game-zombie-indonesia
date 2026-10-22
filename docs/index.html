@@ -9,12 +9,20 @@ html,body{margin:0;height:100%;overflow:hidden;background:#000;touch-action:none
 canvas{display:block}
 #joy{position:fixed;left:24px;bottom:24px;width:120px;height:120px;border-radius:50%;background:rgba(255,255,255,.2);border:2px solid rgba(255,255,255,.5)}
 #knob{position:absolute;left:40px;top:40px;width:40px;height:40px;border-radius:50%;background:rgba(255,255,255,.7)}
+#fire{position:fixed;right:24px;bottom:30px;width:96px;height:96px;border-radius:50%;background:rgba(229,62,62,.6);border:2px solid rgba(255,255,255,.7);color:#fff;font:bold 15px sans-serif;display:flex;align-items:center;justify-content:center}
 #info{position:fixed;top:8px;left:8px;color:#fff;font:14px sans-serif;text-shadow:0 0 3px #000}
+#hpwrap{position:fixed;top:32px;left:8px;width:160px;height:12px;background:rgba(0,0,0,.6);border:1px solid #fff}
+#hpbar{height:100%;width:100%;background:#e53e3e}
+#over{position:fixed;inset:0;display:none;flex-direction:column;align-items:center;justify-content:center;background:rgba(0,0,0,.7);color:#fff;font:bold 36px sans-serif;text-align:center}
+#over small{font-size:16px;font-weight:normal;margin-top:12px}
 </style>
 </head>
 <body>
-<div id="info">Tahap 1: dunia 3D dasar</div>
+<div id="info"></div>
+<div id="hpwrap"><div id="hpbar"></div></div>
 <div id="joy"><div id="knob"></div></div>
+<div id="fire">TEMBAK</div>
+<div id="over"><div>GAME OVER</div><small id="overInfo"></small><small>Ketuk layar untuk main lagi</small></div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script>
 const scene=new THREE.Scene();
@@ -54,24 +62,105 @@ for(let i=0;i<24;i++){
   walls.push({minX:x-w/2,maxX:x+w/2,minZ:z-d/2,maxZ:z+d/2});
 }
 
+function blocked(x,z){
+  for(const w of walls){
+    if(x>w.minX-0.5&&x<w.maxX+0.5&&z>w.minZ-0.5&&z<w.maxZ+0.5)return true;
+  }
+  return false;
+}
+
 const player=new THREE.Group();
 const body=new THREE.Mesh(new THREE.CylinderGeometry(0.4,0.4,1.2,12),new THREE.MeshLambertMaterial({color:0x2b6cb0}));
 body.position.y=0.8;
 const head=new THREE.Mesh(new THREE.SphereGeometry(0.3,12,12),new THREE.MeshLambertMaterial({color:0xe0b48a}));
 head.position.y=1.7;
-const gun=new THREE.Mesh(new THREE.BoxGeometry(0.15,0.15,0.8),new THREE.MeshLambertMaterial({color:0x222222}));
-gun.position.set(0.3,1.1,0.5);
+const gun=new THREE.Mesh(new THREE.BoxGeometry(0.15,0.15,1.0),new THREE.MeshLambertMaterial({color:0x222222}));
+gun.position.set(0.5,1.1,0.7);
 player.add(body,head,gun);
 player.position.set(0,0,5);
 scene.add(player);
 
+const zBodyG=new THREE.CylinderGeometry(0.4,0.4,1.2,10);
+const zHeadG=new THREE.SphereGeometry(0.3,10,10);
+const zArmG=new THREE.BoxGeometry(0.15,0.15,0.7);
+const bulletG=new THREE.SphereGeometry(0.12,6,6);
+const bulletM=new THREE.MeshBasicMaterial({color:0xffd84d});
+
+let hp=100,over=false,overAt=0,wave=0,kills=0,toSpawn=0,spawnT=0,waveDelay=1.5,fireT=0,firing=false;
+const zombies=[],bullets=[];
+const infoEl=document.getElementById('info'),hpEl=document.getElementById('hpbar');
+const overEl=document.getElementById('over'),overInfo=document.getElementById('overInfo');
+
+function makeZombie(x,z){
+  const g=new THREE.Group();
+  const mat=new THREE.MeshLambertMaterial({color:0x6f9a3a});
+  const b=new THREE.Mesh(zBodyG,mat);b.position.y=0.8;
+  const h=new THREE.Mesh(zHeadG,mat);h.position.y=1.7;
+  const a1=new THREE.Mesh(zArmG,mat);a1.position.set(-0.3,1.3,0.45);
+  const a2=new THREE.Mesh(zArmG,mat);a2.position.set(0.3,1.3,0.45);
+  g.add(b,h,a1,a2);
+  g.position.set(x,0,z);
+  g.userData={hp:3,flash:0,mat,ph:Math.random()*6};
+  scene.add(g);
+  zombies.push(g);
+}
+
+function spawnZombie(){
+  for(let i=0;i<12;i++){
+    const a=Math.random()*Math.PI*2;
+    const d=25+Math.random()*10;
+    const x=Math.max(-190,Math.min(190,player.position.x+Math.cos(a)*d));
+    const z=Math.max(-190,Math.min(190,player.position.z+Math.sin(a)*d));
+    if(!blocked(x,z)){makeZombie(x,z);return;}
+  }
+  makeZombie(player.position.x+30,player.position.z);
+}
+
+function startWave(){
+  wave++;
+  toSpawn=3+wave*2;
+  spawnT=0;
+  waveDelay=3;
+}
+
+function shoot(){
+  let target=null,best=30;
+  for(const z of zombies){
+    const d=Math.hypot(z.position.x-player.position.x,z.position.z-player.position.z);
+    if(d<best){best=d;target=z;}
+  }
+  let dx,dz;
+  if(target){
+    dx=target.position.x-player.position.x;
+    dz=target.position.z-player.position.z;
+    const l=Math.hypot(dx,dz)||1;dx/=l;dz/=l;
+  }else{
+    dx=Math.sin(player.rotation.y);
+    dz=Math.cos(player.rotation.y);
+  }
+  player.rotation.y=Math.atan2(dx,dz);
+  const m=new THREE.Mesh(bulletG,bulletM);
+  m.position.set(player.position.x+dx*0.8,1.2,player.position.z+dz*0.8);
+  scene.add(m);
+  bullets.push({m,vx:dx*40,vz:dz*40,life:1});
+}
+
+function updateHud(){
+  infoEl.textContent='Gelombang '+wave+'  |  Zombie: '+(zombies.length+toSpawn)+'  |  Skor: '+kills;
+  hpEl.style.width=Math.max(0,hp)+'%';
+}
+
 let yaw=0;
 const keys={};
-addEventListener('keydown',e=>keys[e.code]=true);
+addEventListener('keydown',e=>{
+  keys[e.code]=true;
+  if(over&&e.code==='Enter'&&performance.now()-overAt>800)location.reload();
+});
 addEventListener('keyup',e=>keys[e.code]=false);
+addEventListener('click',()=>{if(over&&performance.now()-overAt>800)location.reload();});
 
-let jx=0,jy=0,joyId=null,lookId=null,lastX=0;
-const joy=document.getElementById('joy'),knob=document.getElementById('knob');
+let jx=0,jy=0,joyId=null,lookId=null,fireId=null,lastX=0;
+const joy=document.getElementById('joy'),knob=document.getElementById('knob'),fireBtn=document.getElementById('fire');
 function setKnob(dx,dy){
   const r=40,l=Math.hypot(dx,dy);
   if(l>r){dx=dx/l*r;dy=dy/l*r;}
@@ -85,8 +174,10 @@ function moveJoy(t){
 }
 addEventListener('touchstart',e=>{
   e.preventDefault();
+  if(over){if(performance.now()-overAt>800)location.reload();return;}
   for(const t of e.changedTouches){
-    if(joy.contains(t.target)){joyId=t.identifier;moveJoy(t);}
+    if(fireBtn.contains(t.target)){fireId=t.identifier;firing=true;}
+    else if(joy.contains(t.target)){joyId=t.identifier;moveJoy(t);}
     else if(lookId===null&&t.clientX>innerWidth/2){lookId=t.identifier;lastX=t.clientX;}
   }
 },{passive:false});
@@ -101,43 +192,115 @@ function endTouch(e){
   for(const t of e.changedTouches){
     if(t.identifier===joyId){joyId=null;setKnob(0,0);}
     if(t.identifier===lookId)lookId=null;
+    if(t.identifier===fireId){fireId=null;firing=false;}
   }
 }
 addEventListener('touchend',endTouch);
 addEventListener('touchcancel',endTouch);
 
-function blocked(x,z){
-  for(const w of walls){
-    if(x>w.minX-0.5&&x<w.maxX+0.5&&z>w.minZ-0.5&&z<w.maxZ+0.5)return true;
-  }
-  return false;
-}
-
 const clock=new THREE.Clock();
 function loop(){
   requestAnimationFrame(loop);
   const dt=Math.min(clock.getDelta(),0.05);
-  if(keys.ArrowLeft)yaw+=2*dt;
-  if(keys.ArrowRight)yaw-=2*dt;
+  const now=clock.elapsedTime;
   const fx=Math.sin(yaw),fz=Math.cos(yaw);
   const rx=-Math.cos(yaw),rz=Math.sin(yaw);
-  let ix=jx+(keys.KeyD?1:0)-(keys.KeyA?1:0);
-  let iz=-jy+(keys.KeyW?1:0)-(keys.KeyS?1:0);
-  const len=Math.hypot(ix,iz);
-  if(len>1){ix/=len;iz/=len;}
-  if(len>0.05){
-    const dx=(fx*iz+rx*ix)*6*dt;
-    const dz=(fz*iz+rz*ix)*6*dt;
-    const nx=player.position.x+dx;
-    const nz=player.position.z+dz;
-    if(!blocked(nx,player.position.z))player.position.x=Math.max(-190,Math.min(190,nx));
-    if(!blocked(player.position.x,nz))player.position.z=Math.max(-190,Math.min(190,nz));
-    player.rotation.y=Math.atan2(dx,dz);
+
+  if(!over){
+    if(keys.ArrowLeft)yaw+=2*dt;
+    if(keys.ArrowRight)yaw-=2*dt;
+    let ix=jx+(keys.KeyD?1:0)-(keys.KeyA?1:0);
+    let iz=-jy+(keys.KeyW?1:0)-(keys.KeyS?1:0);
+    const len=Math.hypot(ix,iz);
+    if(len>1){ix/=len;iz/=len;}
+    if(len>0.05){
+      const dx=(fx*iz+rx*ix)*6*dt;
+      const dz=(fz*iz+rz*ix)*6*dt;
+      const nx=player.position.x+dx;
+      const nz=player.position.z+dz;
+      if(!blocked(nx,player.position.z))player.position.x=Math.max(-190,Math.min(190,nx));
+      if(!blocked(player.position.x,nz))player.position.z=Math.max(-190,Math.min(190,nz));
+      player.rotation.y=Math.atan2(dx,dz);
+    }
+
+    fireT-=dt;
+    if((firing||keys.Space)&&fireT<=0){shoot();fireT=0.25;}
+
+    if(toSpawn>0){
+      spawnT-=dt;
+      if(spawnT<=0){spawnZombie();toSpawn--;spawnT=0.6;}
+    }else if(zombies.length===0){
+      waveDelay-=dt;
+      if(waveDelay<=0)startWave();
+    }
+
+    const sp=Math.min(2+wave*0.2,3.8);
+    for(let i=0;i<zombies.length;i++){
+      const z=zombies[i],u=z.userData;
+      const dx=player.position.x-z.position.x;
+      const dz=player.position.z-z.position.z;
+      const d=Math.hypot(dx,dz)||1;
+      if(d>0.9){
+        const nx=z.position.x+dx/d*sp*dt;
+        const nz=z.position.z+dz/d*sp*dt;
+        if(!blocked(nx,z.position.z))z.position.x=nx;
+        if(!blocked(z.position.x,nz))z.position.z=nz;
+      }
+      for(let j=i+1;j<zombies.length;j++){
+        const o=zombies[j];
+        const ox=z.position.x-o.position.x,oz=z.position.z-o.position.z;
+        const od=Math.hypot(ox,oz);
+        if(od>0&&od<0.9){
+          const p=(0.9-od)*0.5;
+          z.position.x+=ox/od*p;z.position.z+=oz/od*p;
+          o.position.x-=ox/od*p;o.position.z-=oz/od*p;
+        }
+      }
+      z.rotation.y=Math.atan2(dx,dz);
+      z.position.y=Math.abs(Math.sin(now*6+u.ph))*0.08;
+      u.flash-=dt;
+      u.mat.emissive.setHex(u.flash>0?0x661111:0x000000);
+      if(d<1.2)hp-=12*dt;
+    }
+
+    for(let i=bullets.length-1;i>=0;i--){
+      const b=bullets[i];
+      b.m.position.x+=b.vx*dt;
+      b.m.position.z+=b.vz*dt;
+      b.life-=dt;
+      let remove=b.life<=0||blocked(b.m.position.x,b.m.position.z);
+      if(!remove){
+        for(let j=zombies.length-1;j>=0;j--){
+          const z=zombies[j];
+          if(Math.hypot(z.position.x-b.m.position.x,z.position.z-b.m.position.z)<0.8){
+            z.userData.hp--;
+            z.userData.flash=0.12;
+            remove=true;
+            if(z.userData.hp<=0){
+              scene.remove(z);
+              zombies.splice(j,1);
+              kills++;
+            }
+            break;
+          }
+        }
+      }
+      if(remove){scene.remove(b.m);bullets.splice(i,1);}
+    }
+
+    if(hp<=0){
+      hp=0;over=true;overAt=performance.now();
+      overInfo.textContent='Kamu bertahan sampai gelombang '+wave+', skor '+kills;
+      overEl.style.display='flex';
+    }
+    updateHud();
   }
+
   camera.position.set(player.position.x-fx*6,3.5,player.position.z-fz*6);
   camera.lookAt(player.position.x,1.5,player.position.z);
   renderer.render(scene,camera);
 }
+updateHud();
 loop();
 
 addEventListener('resize',()=>{
