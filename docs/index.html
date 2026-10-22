@@ -13,6 +13,11 @@ canvas{display:block}
 #info{position:fixed;top:8px;left:8px;color:#fff;font:14px sans-serif;text-shadow:0 0 3px #000}
 #hpwrap{position:fixed;top:32px;left:8px;width:160px;height:12px;background:rgba(0,0,0,.6);border:1px solid #fff}
 #hpbar{height:100%;width:100%;background:#e53e3e}
+#cross{position:fixed;left:50%;top:50%;width:22px;height:22px;margin:-11px 0 0 -11px;pointer-events:none}
+#cross:before,#cross:after{content:"";position:absolute;background:#fff;box-shadow:0 0 2px #000}
+#cross:before{left:10px;top:0;width:2px;height:22px}
+#cross:after{top:10px;left:0;height:2px;width:22px}
+#hint{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);color:#fff;font:15px sans-serif;background:rgba(0,0,0,.6);padding:8px 14px;border-radius:8px;text-align:center;display:none}
 #over{position:fixed;inset:0;display:none;flex-direction:column;align-items:center;justify-content:center;background:rgba(0,0,0,.7);color:#fff;font:bold 36px sans-serif;text-align:center}
 #over small{font-size:16px;font-weight:normal;margin-top:12px}
 </style>
@@ -20,11 +25,21 @@ canvas{display:block}
 <body>
 <div id="info"></div>
 <div id="hpwrap"><div id="hpbar"></div></div>
+<div id="cross"></div>
+<div id="hint">Klik layar untuk mengunci mouse<br>WASD jalan | Mouse bidik | Klik kiri tembak | Esc lepas mouse</div>
 <div id="joy"><div id="knob"></div></div>
 <div id="fire">TEMBAK</div>
-<div id="over"><div>GAME OVER</div><small id="overInfo"></small><small>Ketuk layar untuk main lagi</small></div>
+<div id="over"><div>GAME OVER</div><small id="overInfo"></small><small>Klik atau ketuk layar untuk main lagi</small></div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script>
+const isTouch=matchMedia('(pointer:coarse)').matches;
+if(!isTouch){
+  document.getElementById('joy').style.display='none';
+  document.getElementById('fire').style.display='none';
+}else{
+  document.getElementById('cross').style.display='none';
+}
+
 const scene=new THREE.Scene();
 scene.background=new THREE.Color(0x9ec9e8);
 scene.fog=new THREE.Fog(0x9ec9e8,30,120);
@@ -86,10 +101,11 @@ const zArmG=new THREE.BoxGeometry(0.15,0.15,0.7);
 const bulletG=new THREE.SphereGeometry(0.12,6,6);
 const bulletM=new THREE.MeshBasicMaterial({color:0xffd84d});
 
-let hp=100,over=false,overAt=0,wave=0,kills=0,toSpawn=0,spawnT=0,waveDelay=1.5,fireT=0,firing=false;
+let hp=100,over=false,overAt=0,wave=0,kills=0,toSpawn=0,spawnT=0,waveDelay=1.5,fireT=0,firing=false,locked=false;
 const zombies=[],bullets=[];
 const infoEl=document.getElementById('info'),hpEl=document.getElementById('hpbar');
 const overEl=document.getElementById('over'),overInfo=document.getElementById('overInfo');
+const hintEl=document.getElementById('hint');
 
 function makeZombie(x,z){
   const g=new THREE.Group();
@@ -123,22 +139,29 @@ function startWave(){
   waveDelay=3;
 }
 
+let yaw=0;
+
 function shoot(){
-  let target=null,best=30;
-  for(const z of zombies){
-    const d=Math.hypot(z.position.x-player.position.x,z.position.z-player.position.z);
-    if(d<best){best=d;target=z;}
-  }
   let dx,dz;
-  if(target){
-    dx=target.position.x-player.position.x;
-    dz=target.position.z-player.position.z;
-    const l=Math.hypot(dx,dz)||1;dx/=l;dz/=l;
+  if(locked){
+    dx=Math.sin(yaw);
+    dz=Math.cos(yaw);
   }else{
-    dx=Math.sin(player.rotation.y);
-    dz=Math.cos(player.rotation.y);
+    let target=null,best=30;
+    for(const z of zombies){
+      const d=Math.hypot(z.position.x-player.position.x,z.position.z-player.position.z);
+      if(d<best){best=d;target=z;}
+    }
+    if(target){
+      dx=target.position.x-player.position.x;
+      dz=target.position.z-player.position.z;
+      const l=Math.hypot(dx,dz)||1;dx/=l;dz/=l;
+    }else{
+      dx=Math.sin(player.rotation.y);
+      dz=Math.cos(player.rotation.y);
+    }
+    player.rotation.y=Math.atan2(dx,dz);
   }
-  player.rotation.y=Math.atan2(dx,dz);
   const m=new THREE.Mesh(bulletG,bulletM);
   m.position.set(player.position.x+dx*0.8,1.2,player.position.z+dz*0.8);
   scene.add(m);
@@ -150,14 +173,36 @@ function updateHud(){
   hpEl.style.width=Math.max(0,hp)+'%';
 }
 
-let yaw=0;
+function updateHint(){
+  hintEl.style.display=(!isTouch&&!locked&&!over)?'block':'none';
+}
+
 const keys={};
 addEventListener('keydown',e=>{
   keys[e.code]=true;
   if(over&&e.code==='Enter'&&performance.now()-overAt>800)location.reload();
 });
 addEventListener('keyup',e=>keys[e.code]=false);
-addEventListener('click',()=>{if(over&&performance.now()-overAt>800)location.reload();});
+
+document.addEventListener('pointerlockchange',()=>{
+  locked=document.pointerLockElement===renderer.domElement;
+  if(!locked){firing=false;}
+  updateHint();
+});
+addEventListener('mousedown',e=>{
+  if(isTouch)return;
+  if(over){if(performance.now()-overAt>800)location.reload();return;}
+  if(!locked){
+    if(renderer.domElement.requestPointerLock)renderer.domElement.requestPointerLock();
+    return;
+  }
+  if(e.button===0)firing=true;
+});
+addEventListener('mouseup',e=>{if(e.button===0&&!isTouch)firing=false;});
+addEventListener('mousemove',e=>{
+  if(locked&&!over)yaw-=e.movementX*0.0025;
+});
+addEventListener('contextmenu',e=>e.preventDefault());
 
 let jx=0,jy=0,joyId=null,lookId=null,fireId=null,lastX=0;
 const joy=document.getElementById('joy'),knob=document.getElementById('knob'),fireBtn=document.getElementById('fire');
@@ -220,8 +265,9 @@ function loop(){
       const nz=player.position.z+dz;
       if(!blocked(nx,player.position.z))player.position.x=Math.max(-190,Math.min(190,nx));
       if(!blocked(player.position.x,nz))player.position.z=Math.max(-190,Math.min(190,nz));
-      player.rotation.y=Math.atan2(dx,dz);
+      if(!locked)player.rotation.y=Math.atan2(dx,dz);
     }
+    if(locked)player.rotation.y=yaw;
 
     fireT-=dt;
     if((firing||keys.Space)&&fireT<=0){shoot();fireT=0.25;}
@@ -292,15 +338,19 @@ function loop(){
       hp=0;over=true;overAt=performance.now();
       overInfo.textContent='Kamu bertahan sampai gelombang '+wave+', skor '+kills;
       overEl.style.display='flex';
+      firing=false;
+      if(document.exitPointerLock)document.exitPointerLock();
+      updateHint();
     }
     updateHud();
   }
 
   camera.position.set(player.position.x-fx*6,3.5,player.position.z-fz*6);
-  camera.lookAt(player.position.x,1.5,player.position.z);
+  camera.lookAt(player.position.x+fx*20,1.2,player.position.z+fz*20);
   renderer.render(scene,camera);
 }
 updateHud();
+updateHint();
 loop();
 
 addEventListener('resize',()=>{
